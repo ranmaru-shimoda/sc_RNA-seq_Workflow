@@ -1,0 +1,164 @@
+---
+title: "scRNAseq_Pipeline"
+author: "Ranmaru Shimoda"
+date: "2023-08-12"
+output: html_document
+---
+
+```{r}
+#本スクリプトはSeuratを通じてシナプス活動を引き起こした神経細胞種を同定する解析パイプラインである。
+```
+
+```{r}
+#Install libraries first
+library(Seurat)
+library(dplyr)
+library(patchwork)
+```
+
+```{r}
+# Load the brain dataset
+brain.data <- Read10X(data.dir = "/Users/ranmarushimoda/Downloads/hg19/") #scRNAseqデータが保存されているパスを記載
+# Initialize the Seurat object with the raw (non-normalized data).
+brain <- CreateSeuratObject(counts = brain.data, project = "CFC", min.cells = 3, min.features = 200)
+brain
+```
+
+```{r}
+brain[["percent.mt"]] <- PercentageFeatureSet(brain, pattern = "^MT-")
+```
+
+
+```{r}
+VlnPlot(brain, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r}
+plot1 <- FeatureScatter(brain, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(brain, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+```{r}
+brain <- subset(brain, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+```{r}
+brain <- NormalizeData(brain)
+```
+
+```{r}
+brain <- FindVariableFeatures(brain, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(brain), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(brain)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+```
+
+```{r}
+all.genes <- rownames(brain)
+brain <- ScaleData(brain, features = all.genes)
+```
+
+```{r}
+brain <- RunPCA(brain, features = VariableFeatures(object = brain))
+```
+
+```{r}
+print(brain[["pca"]], dims = 1:5, nfeatures = 5)
+```
+
+```{r}
+VizDimLoadings(brain, dims = 1:2, reduction = "pca")
+```
+
+```{r}
+DimHeatmap(brain, dims = 1, cells = 500, balanced = TRUE)
+```
+
+```{r}
+DimHeatmap(brain, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+```{r}
+brain <- JackStraw(brain, num.replicate = 100)
+brain <- ScoreJackStraw(brain, dims = 1:20)
+```
+
+```{r}
+JackStrawPlot(brain, dims = 1:15)
+```
+
+```{r}
+ElbowPlot(brain)
+```
+
+```{r}
+brain <- FindNeighbors(brain, dims = 1:10)
+brain <- FindClusters(brain, resolution = 0.5)
+```
+
+```{r}
+head(Idents(brain), 5)
+```
+
+
+```{r}
+brain <- RunUMAP(brain, dims = 1:10)
+```
+
+```{r}
+DimPlot(brain, reduction = "umap")
+```
+
+```{r}
+saveRDS(brain, file = "../output/scRNAseq_data.rds")
+```
+
+```{r}
+cluster2.markers <- FindMarkers(brain, ident.1 = 2, min.pct = 0.25)
+head(cluster2.markers, n = 5)
+```
+
+```{r}
+brain.markers <- FindAllMarkers(brain, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+brain.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 2, order_by = avg_log2FC)
+```
+
+```{r}
+VlnPlot(brain, features = c("MS4A1", "CD79A"))
+```
+
+```{r}
+VlnPlot(brain, features = c("ARC", "VENUS"), slot = "counts", log = TRUE)
+```
+
+```{r}
+FeaturePlot(brain, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP", "CD8A"))
+```
+
+```{r}
+brain.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+DoHeatmap(brain, features = top10$gene) + NoLegend()
+```
+
+```{r}
+#細胞種は〇〇のデータベースを参考にする。
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono",
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(brain)
+brain <- RenameIdents(brain, new.cluster.ids)
+DimPlot(brain, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+```
+
+```{r}
+saveRDS(brain, file = "../output/brain_final.rds")
+```
